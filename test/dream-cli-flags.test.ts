@@ -48,6 +48,15 @@ describe('dream CLI flag wiring', () => {
     expect(dreamSrc).toContain('synthTo');
   });
 
+  test('declares --source flag and forwards it as sourceId to runCycle', () => {
+    expect(dreamSrc).toContain("'--source'");
+    expect(dreamSrc).toContain('sourceId: opts.source');
+  });
+
+  test('help text documents --source flag', () => {
+    expect(dreamSrc).toContain('--source <id>');
+  });
+
   test('totals line includes synth + patterns counters', () => {
     expect(dreamSrc).toContain('synth_transcripts');
     expect(dreamSrc).toContain('synth_pages');

@@ -258,7 +258,15 @@ export async function importFromContent(
     tags: parsed.tags,
   };
 
-  const existing = await engine.getPage(slug, sourceId ? { sourceId } : undefined);
+  // Resolve the effective source ONCE and scope BOTH the existence read and
+  // the version/page writes to it. The engine's createVersion/putPage default
+  // an undefined sourceId to 'default', so an unscoped getPage (which matches
+  // ANY source's row) could pair with a default-scoped write — the existence
+  // check finds a row under another source, then createVersion looks under
+  // 'default', finds nothing, and throws, permanently stranding the page.
+  // Scoping the read to effectiveSourceId closes that asymmetry.
+  const effectiveSourceId = sourceId ?? 'default';
+  const existing = await engine.getPage(slug, { sourceId: effectiveSourceId });
   if (existing?.content_hash === hash && !opts.forceRechunk) {
     return { slug, status: 'skipped', chunks: 0, parsedPage };
   }
@@ -298,7 +306,7 @@ export async function importFromContent(
   // caller's sourceId so writes target (sourceId, slug) rather than the
   // schema DEFAULT — required for multi-source brains; harmless ('default')
   // for single-source callers.
-  const txOpts = sourceId ? { sourceId } : undefined;
+  const txOpts = { sourceId: effectiveSourceId };
   await engine.transaction(async (tx) => {
     if (existing) await tx.createVersion(slug, txOpts);
 
@@ -543,7 +551,12 @@ export async function importCodeFile(
   const lang = detectCodeLanguage(relativePath) || 'unknown';
   const title = `${relativePath} (${lang})`;
   const sourceId = opts.sourceId;
-  const txOpts = sourceId ? { sourceId } : undefined;
+  // Resolve the effective source ONCE so the existence read and the
+  // version/page writes target the same row. See the matching note in
+  // importFromContent: an unscoped getPage paired with a default-scoped
+  // createVersion throws and strands the page.
+  const effectiveSourceId = sourceId ?? 'default';
+  const txOpts = { sourceId: effectiveSourceId };
 
   const byteLength = Buffer.byteLength(content, 'utf-8');
   if (byteLength > MAX_FILE_SIZE) {
@@ -556,7 +569,7 @@ export async function importCodeFile(
     .update(JSON.stringify({ title, type: 'code', content, lang, chunker_version: CHUNKER_VERSION }))
     .digest('hex');
 
-  const existing = await engine.getPage(slug, sourceId ? { sourceId } : undefined);
+  const existing = await engine.getPage(slug, { sourceId: effectiveSourceId });
   if (!opts.force && existing?.content_hash === hash) {
     return { slug, status: 'skipped', chunks: 0 };
   }
@@ -594,7 +607,7 @@ export async function importCodeFile(
   // OpenAI API. Order matters: our chunk_index is semantic (tree-sitter
   // order), so a matching (chunk_index, text_hash) means a verbatim
   // preserved symbol.
-  const existingChunks = existing ? await engine.getChunks(slug, sourceId ? { sourceId } : undefined) : [];
+  const existingChunks = existing ? await engine.getChunks(slug, { sourceId: effectiveSourceId }) : [];
   const existingByKey = new Map<string, typeof existingChunks[number]>();
   for (const ec of existingChunks) {
     existingByKey.set(`${ec.chunk_index}:${ec.chunk_text}`, ec);
@@ -660,7 +673,7 @@ export async function importCodeFile(
   // chunk IDs are stable.
   if (extractedEdges.length > 0 && chunks.length > 0) {
     try {
-      const persistedChunks = await engine.getChunks(slug, sourceId ? { sourceId } : undefined);
+      const persistedChunks = await engine.getChunks(slug, { sourceId: effectiveSourceId });
       const byIndex = new Map<number, { id?: number; symbol_name_qualified?: string | null; start_line?: number | null; end_line?: number | null }>();
       for (const pc of persistedChunks) {
         byIndex.set(pc.chunk_index, pc);
