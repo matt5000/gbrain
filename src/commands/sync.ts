@@ -295,7 +295,7 @@ async function readSyncAnchor(
   return await engine.getConfig(`sync.${which}`);
 }
 
-async function writeSyncAnchor(
+export async function writeSyncAnchor(
   engine: BrainEngine,
   sourceId: string | undefined,
   which: 'repo_path' | 'last_commit',

@@ -351,17 +351,26 @@ export async function runImport(
       const { recordSyncFailures } = await import('../core/sync.ts');
       recordSyncFailures(failures, gitHead);
     }
+    // Route last_commit + repo_path through writeSyncAnchor so a
+    // source-scoped import advances THAT source's row (sources.last_commit
+    // / local_path) rather than the global config keys. Pre-fix this always
+    // hit the global `sync.last_commit`, so a scoped `gbrain sync --source X`
+    // (which reads the source row) never saw the import's progress and
+    // re-walked the whole diff — and the global key drifted to whichever
+    // source imported last. last_run stays global, matching sync.ts (it's a
+    // single "when did any sync last run" indicator, not per-source).
+    const { writeSyncAnchor } = await import('./sync.ts');
     if (failures.length === 0) {
-      await engine.setConfig('sync.last_commit', gitHead);
+      await writeSyncAnchor(engine, sourceId, 'last_commit', gitHead);
     } else {
       console.error(
         `\nImport completed with ${failures.length} failure(s). ` +
-        `sync.last_commit NOT advanced — re-run 'gbrain sync' to retry, or ` +
+        `last_commit NOT advanced — re-run 'gbrain sync' to retry, or ` +
         `'gbrain sync --skip-failed' to acknowledge and move past them.`,
       );
     }
     await engine.setConfig('sync.last_run', new Date().toISOString());
-    await engine.setConfig('sync.repo_path', dir);
+    await writeSyncAnchor(engine, sourceId, 'repo_path', dir);
   }
 
   return { imported, skipped, errors, chunksCreated, failures };
