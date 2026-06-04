@@ -13,8 +13,9 @@
  * Hermetic PGLite in-memory.
  */
 
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -98,5 +99,58 @@ describe('import --source-id (#1167)', () => {
       `SELECT source_id FROM pages LIMIT 1`,
     );
     expect(rows[0]?.source_id).toBe('dept-x');
+  });
+});
+
+/**
+ * Follow-up to the source-resolution fix: a source-scoped import must
+ * advance THAT source's sync anchor (sources.last_commit / local_path),
+ * not the global `sync.last_commit` config key. Pre-fix import.ts always
+ * wrote the global key, so a scoped `gbrain sync --source X` (which reads
+ * the source row) never saw the import's progress and re-walked the diff.
+ */
+describe('import writes a source-scoped sync anchor', () => {
+  let gitDir: string;
+  let head: string;
+
+  beforeEach(async () => {
+    await truncatePages();
+    await engine.setConfig('sync.last_commit', '');  // clear global key
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('dept-x', 'dept-x') ON CONFLICT DO NOTHING`,
+    );
+    gitDir = mkdtempSync(join(tmpdir(), 'gbrain-import-git-'));
+    const git = (...a: string[]) =>
+      execFileSync('git', ['-C', gitDir, ...a], { encoding: 'utf-8' });
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'test');
+    writeFileSync(join(gitDir, 'alpha.md'), '---\ntype: note\n---\n# Alpha\n\nBody.');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'init');
+    head = git('rev-parse', 'HEAD').trim();
+  });
+
+  afterEach(() => {
+    rmSync(gitDir, { recursive: true, force: true });
+  });
+
+  test('--source-id advances sources.last_commit, NOT the global key', async () => {
+    await runImport(engine, [gitDir, '--source-id', 'dept-x', '--no-embed', '--json']);
+
+    const src = await engine.executeRaw<{ last_commit: string | null; local_path: string | null }>(
+      `SELECT last_commit, local_path FROM sources WHERE id = 'dept-x'`,
+    );
+    expect(src[0]?.last_commit).toBe(head);     // source anchor advanced
+    expect(src[0]?.local_path).toBe(gitDir);    // repo_path scoped too
+
+    const globalCommit = await engine.getConfig('sync.last_commit');
+    expect(globalCommit ?? '').toBe('');        // global key untouched
+  });
+
+  test('unscoped import still writes the global anchor (back-compat)', async () => {
+    await runImport(engine, [gitDir, '--no-embed', '--json']);
+    const globalCommit = await engine.getConfig('sync.last_commit');
+    expect(globalCommit).toBe(head);
   });
 });
