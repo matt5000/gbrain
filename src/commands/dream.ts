@@ -53,6 +53,13 @@ interface DreamArgs {
    * Never auto-applied for --input (codex finding #3).
    */
   bypassDreamGuard: boolean;
+  /**
+   * Explicit source id for the sync phase. Overrides path-based
+   * auto-detection (resolveSourceForDir), which fails when the same
+   * logical repo syncs from multiple machines under different
+   * per-machine local_path rows.
+   */
+  source: string | undefined;
 }
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -70,6 +77,9 @@ function parseArgs(args: string[]): DreamArgs {
 
   const dirIdx = args.indexOf('--dir');
   const dir = dirIdx !== -1 ? args[dirIdx + 1] : null;
+
+  const sourceIdx = args.indexOf('--source');
+  const source = sourceIdx !== -1 ? args[sourceIdx + 1] ?? undefined : undefined;
 
   const inputIdx = args.indexOf('--input');
   const inputFile = inputIdx !== -1 ? args[inputIdx + 1] ?? null : null;
@@ -121,6 +131,7 @@ function parseArgs(args: string[]): DreamArgs {
     from,
     to,
     bypassDreamGuard: args.includes('--unsafe-bypass-dream-guard'),
+    source,
   };
 }
 
@@ -179,6 +190,8 @@ Options:
   --phase <name>      Run a single phase: ${ALL_PHASES.join(' | ')}
   --pull              git pull the brain repo before syncing (default: no pull)
   --dir <path>        Brain directory (default: configured brain)
+  --source <id>       Pin the source id for the sync phase (overrides
+                      path-based auto-detection)
 
   --input <file>      Synthesize a specific transcript file (implies
                       --phase synthesize). Bypasses corpus-dir scan.
@@ -285,6 +298,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     synthFrom: opts.from ?? undefined,
     synthTo: opts.to ?? undefined,
     synthBypassDreamGuard: opts.bypassDreamGuard,
+    sourceId: opts.source,
   });
 
   if (opts.json) {

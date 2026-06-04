@@ -286,6 +286,8 @@ export interface CycleOpts {
    * loop bug (codex finding #3).
    */
   synthBypassDreamGuard?: boolean;
+  /** Explicit source id for the sync phase. Overrides path-based resolveSourceForDir. */
+  sourceId?: string;
   /**
    * AbortSignal from the Minions worker (v0.22.1, #403). When aborted
    * (timeout, cancel, lock-loss), runCycle bails between phases and
@@ -619,13 +621,17 @@ async function runPhaseSync(
   dryRun: boolean,
   pull: boolean,
   willRunExtractPhase: boolean,
+  explicitSourceId?: string,
 ): Promise<SyncPhaseResult> {
   try {
     const { performSync } = await import('../commands/sync.ts');
     // Resolve the per-source id so sync reads source-scoped last_commit
     // instead of the global config key. The global key can drift out of
     // git history (force push, GC) causing a full reimport of all files.
-    const sourceId = await resolveSourceForDir(engine, brainDir);
+    // An explicit source id (CLI `--source`) wins over path-based
+    // auto-detection — needed when the same logical repo syncs from
+    // multiple machines under different per-machine local_path rows.
+    const sourceId = explicitSourceId ?? await resolveSourceForDir(engine, brainDir);
     const result = await performSync(engine, {
       repoPath: brainDir,
       sourceId,
@@ -1164,7 +1170,7 @@ export async function runCycle(
         });
       } else {
         progress.start('cycle.sync');
-        const { result, duration_ms } = await timePhase(() => runPhaseSync(engine, opts.brainDir, dryRun, pull, phases.includes('extract')));
+        const { result, duration_ms } = await timePhase(() => runPhaseSync(engine, opts.brainDir, dryRun, pull, phases.includes('extract'), opts.sourceId));
         result.duration_ms = duration_ms;
         // Capture changed slugs for incremental extract.
         syncPagesAffected = (result as SyncPhaseResult).pagesAffected;
